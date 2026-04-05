@@ -32,6 +32,7 @@ while [ ! -d $intel_dir -o ! -d $kbd_dir ]; do
     sleep 1
 done
 screen_max=$(cat $intel_dir/max_brightness)
+active_session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
 
 #####################################################
 # Private States
@@ -46,6 +47,23 @@ function get_light {
     echo $val
 }
 
+function notify_brightness {
+    local dev=$1
+    local value=$2
+    [ -z "$active_session" ] && return
+    if [ "$dev" = "$screen_file" ]; then
+        busctl call org.freedesktop.login1 \
+            "/org/freedesktop/login1/session/$active_session" \
+            org.freedesktop.login1.Session SetBrightness "ssu" \
+            "backlight" "intel_backlight" "$value" 2>/dev/null
+    else
+        busctl call org.freedesktop.login1 \
+            "/org/freedesktop/login1/session/$active_session" \
+            org.freedesktop.login1.Session SetBrightness "ssu" \
+            "leds" "smc::kbd_backlight" "$value" 2>/dev/null
+    fi
+}
+
 function transition {
     from=$1
     to=$2
@@ -56,6 +74,7 @@ function transition {
         result=$(echo "($to - $from) * $step / $steps + $from" | bc)
         echo "$result" > "$dev"
     done
+    notify_brightness "$dev" "$to"
 }
 
 function screen_range {
