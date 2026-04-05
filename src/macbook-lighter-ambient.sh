@@ -40,6 +40,7 @@ while [ ! -d $intel_dir -o ! -d $kbd_dir ]; do
 done
 screen_max=$(cat $intel_dir/max_brightness)
 active_session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
+active_uid=$(loginctl show-seat seat0 -p ActiveUser --value 2>/dev/null)
 
 #####################################################
 # Private States
@@ -57,17 +58,34 @@ function get_light {
 function notify_brightness {
     local dev=$1
     local value=$2
-    [ -z "$active_session" ] && return
+
     if [ "$dev" = "$screen_file" ]; then
-        busctl call org.freedesktop.login1 \
+        [ -n "$active_session" ] && busctl call org.freedesktop.login1 \
             "/org/freedesktop/login1/session/$active_session" \
             org.freedesktop.login1.Session SetBrightness "ssu" \
-            "backlight" "intel_backlight" "$value" 2>/dev/null
+            "backlight" "intel_backlight" "$value" 2>/dev/null || true
+        [ -n "$active_uid" ] && DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${active_uid}/bus" \
+            /usr/bin/gdbus call --session \
+            --dest org.gnome.Shell.Extensions.MacbookLighter \
+            --object-path /org/gnome/Shell/Extensions/MacbookLighter \
+            --method org.gnome.Shell.Extensions.MacbookLighter.SetScreenBrightness \
+            "uint32 $value" 2>/dev/null || true
     else
-        busctl call org.freedesktop.login1 \
+        [ -n "$active_session" ] && busctl call org.freedesktop.login1 \
             "/org/freedesktop/login1/session/$active_session" \
             org.freedesktop.login1.Session SetBrightness "ssu" \
-            "leds" "smc::kbd_backlight" "$value" 2>/dev/null
+            "leds" "smc::kbd_backlight" "$value" 2>/dev/null || true
+        if [ -n "$active_uid" ]; then
+            local kbd_max percent
+            kbd_max=$(cat $kbd_dir/max_brightness)
+            percent=$(( value * 100 / kbd_max ))
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${active_uid}/bus" \
+                /usr/bin/gdbus call --session \
+                --dest org.gnome.Shell.Extensions.MacbookLighter \
+                --object-path /org/gnome/Shell/Extensions/MacbookLighter \
+                --method org.gnome.Shell.Extensions.MacbookLighter.SetKeyboardBrightness \
+                "uint32 $percent" 2>/dev/null || true
+        fi
     fi
 }
 

@@ -25,13 +25,24 @@ kbd_help () {
 }
 
 notify_brightness() {
-    local session
-    session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
-    [ -z "$session" ] && return
-    busctl call org.freedesktop.login1 \
+    local value="$1" session uid percent
+    session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null) || true
+    uid=$(loginctl show-seat seat0 -p ActiveUser --value 2>/dev/null) || true
+
+    [ -n "$session" ] && busctl call org.freedesktop.login1 \
         "/org/freedesktop/login1/session/$session" \
         org.freedesktop.login1.Session SetBrightness "ssu" \
-        "leds" "smc::kbd_backlight" "$1" 2>/dev/null
+        "leds" "smc::kbd_backlight" "$value" 2>/dev/null || true
+
+    if [ -n "$uid" ]; then
+        percent=$(( value * 100 / max ))
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
+            /usr/bin/gdbus call --session \
+            --dest org.gnome.Shell.Extensions.MacbookLighter \
+            --object-path /org/gnome/Shell/Extensions/MacbookLighter \
+            --method org.gnome.Shell.Extensions.MacbookLighter.SetKeyboardBrightness \
+            "uint32 $percent" 2>/dev/null || true
+    fi
 }
 
 kbd_set() {
