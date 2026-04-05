@@ -28,8 +28,15 @@ ML_DEBUG=${ML_DEBUG:-false}
 # wait drivers loaded
 
 $ML_DEBUG && echo checking $intel_dir and $kbd_dir...
+wait_timeout=30
+waited=0
 while [ ! -d $intel_dir -o ! -d $kbd_dir ]; do
+    if (( waited >= wait_timeout )); then
+        echo "error: backlight drivers not found after ${wait_timeout}s, aborting" >&2
+        exit 1
+    fi
     sleep 1
+    (( waited++ ))
 done
 screen_max=$(cat $intel_dir/max_brightness)
 active_session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
