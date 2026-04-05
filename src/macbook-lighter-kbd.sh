@@ -24,8 +24,19 @@ kbd_help () {
     echo '  macbook-lighter-kbd --max'
 }
 
+notify_brightness() {
+    local session
+    session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
+    [ -z "$session" ] && return
+    busctl call org.freedesktop.login1 \
+        "/org/freedesktop/login1/session/$session" \
+        org.freedesktop.login1.Session SetBrightness "ssu" \
+        "leds" "smc::kbd_backlight" "$1" 2>/dev/null
+}
+
 kbd_set() {
     echo $1 > $device
+    notify_brightness "$1"
     echo set to $1
 }
 
