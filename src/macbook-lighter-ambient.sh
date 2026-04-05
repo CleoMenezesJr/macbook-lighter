@@ -155,7 +155,7 @@ function watch {
 
 function power_coef {
     power=$(cat $power_file)
-    if [ "$power" == 0 ]; then
+    if [ "$power" -eq 0 ]; then
         echo "1 - $ML_BATTERY_DIM" | bc
     else
         echo 1
