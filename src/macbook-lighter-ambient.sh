@@ -43,7 +43,7 @@ active_session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
 
 #####################################################
 # Private States
-screen_ajusted_at=0
+screen_adjusted_at=0
 kbd_adjusted_at=0
 
 function get_light {
@@ -98,13 +98,13 @@ function screen_range {
 function update_screen {
     light=$1
     screen_from=$(cat $screen_file)
-    screen_to=$(echo "$screen_from * $light / $screen_ajusted_at" | bc)
+    screen_to=$(echo "$screen_from * $light / $screen_adjusted_at" | bc)
     screen_to=$(screen_range $screen_to)
     if (( screen_to - screen_from > -ML_SCREEN_THRESHOLD && screen_to - screen_from < ML_SCREEN_THRESHOLD )); then
         $ML_DEBUG && echo "screen threshold not reached($screen_from->$screen_to), skip update"
         return
     fi
-    screen_ajusted_at=$light
+    screen_adjusted_at=$light
     transition $screen_from $screen_to $screen_file
 }
 
@@ -167,7 +167,7 @@ function init {
 
     light=$(get_light)
 
-    screen_ajusted_at=$light
+    screen_adjusted_at=$light
     kbd_adjusted_at=$light
     if (( light >= ML_BRIGHT_ENOUGH )); then
         screen_to=$screen_max
