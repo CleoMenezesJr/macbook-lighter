@@ -10,15 +10,6 @@ lid_file=/proc/acpi/button/lid/LID0/state
 light_file="/sys/devices/platform/applesmc.768/light"
 
 #####################################################
-# wait drivers loaded
-
-$ML_DEBUG && echo checking $intel_dir and $kbd_dir...
-while [ ! -d $intel_dir -o ! -d $kbd_dir ]; do
-    sleep 1
-done
-screen_max=$(cat $intel_dir/max_brightness)
-
-#####################################################
 # Settings
 [ -f /etc/macbook-lighter.conf ] && source /etc/macbook-lighter.conf
 ML_DURATION=${ML_DURATION:-1.5}
@@ -32,6 +23,15 @@ ML_BATTERY_DIM=${ML_BATTERY_DIM:-0.2}
 ML_AUTO_KBD=${ML_AUTO_KBD:-true}
 ML_AUTO_SCREEN=${ML_AUTO_SCREEN:-true}
 ML_DEBUG=${ML_DEBUG:-false}
+
+#####################################################
+# wait drivers loaded
+
+$ML_DEBUG && echo checking $intel_dir and $kbd_dir...
+while [ ! -d $intel_dir -o ! -d $kbd_dir ]; do
+    sleep 1
+done
+screen_max=$(cat $intel_dir/max_brightness)
 
 #####################################################
 # Private States
