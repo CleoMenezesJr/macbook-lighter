@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -e
 
 device='/sys/class/backlight/intel_backlight/brightness'
