@@ -51,7 +51,6 @@ function transition {
     to=$2
     dev=$3
     $ML_DEBUG && echo "transition $dev from $from to $to"
-    length=$(echo "$from - $to" | bc)
     steps=$(echo "$ML_DURATION / $ML_FRAME" | bc)
     for ((step=1; step<=$steps; step++)); do
         result=$(echo "($to - $from) * $step / $steps + $from" | bc)
