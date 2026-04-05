@@ -42,9 +42,11 @@ screen_set() {
 
 case $1 in
     -i|--inc)
+        [[ -z "$2" || ! "$2" =~ ^[0-9]+$ ]] && { echo "error: --inc requires a numeric argument"; screen_help; exit 1; }
         screen_set $((current+$2 > max ? max : current + $2))
     ;;
     -d|--dec)
+        [[ -z "$2" || ! "$2" =~ ^[0-9]+$ ]] && { echo "error: --dec requires a numeric argument"; screen_help; exit 1; }
         screen_set $((current < $2 ? 0 : current - $2))
     ;;
     -m|--min)
