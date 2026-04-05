@@ -109,7 +109,7 @@ function update_kbd {
 
 function update {
     $ML_DEBUG && echo updating
-    lid=$(awk -F: '{print $2}' $lid_file)
+    lid=$(awk '{print $2}' $lid_file)
     if [ "$lid" == "closed" ]; then
         $ML_DEBUG && echo lid closed, skip update
         return
