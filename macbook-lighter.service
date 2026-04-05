@@ -1,6 +1,6 @@
 [Unit]
 Description=Macbook screen backlight on the ambient light
-Documentation=https://github.com/harttle/macbook-lighter
+Documentation=https://github.com/cleomenezesjr/macbook-lighter
 
 [Service]
 Type=simple
