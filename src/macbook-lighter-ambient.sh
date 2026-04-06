@@ -20,6 +20,7 @@ ML_SCREEN_THRESHOLD=${ML_SCREEN_THRESHOLD:-10}
 ML_SCREEN_MIN_BRIGHT=${ML_SCREEN_MIN_BRIGHT:-15}
 ML_KBD_BRIGHT=${ML_KBD_BRIGHT:-128}
 ML_BATTERY_DIM=${ML_BATTERY_DIM:-0.2}
+ML_KBD_TIMEOUT=${ML_KBD_TIMEOUT:-30}
 ML_AUTO_KBD=${ML_AUTO_KBD:-true}
 ML_AUTO_SCREEN=${ML_AUTO_SCREEN:-true}
 ML_DEBUG=${ML_DEBUG:-false}
@@ -46,6 +47,22 @@ active_uid=$(loginctl show-seat seat0 -p ActiveUser --value 2>/dev/null)
 # Private States
 screen_adjusted_at=0
 kbd_adjusted_at=0
+kbd_off_for_idle=false
+
+function is_idle_for {
+    local timeout_sec=$1
+    (( timeout_sec <= 0 )) && return 1
+    [ -z "$active_session" ] && return 1
+
+    local idle_hint idle_since_us current_us idle_sec
+    idle_hint=$(loginctl show-session "$active_session" -p IdleHint --value 2>/dev/null) || return 1
+    [ "$idle_hint" = "yes" ] || return 1
+
+    idle_since_us=$(loginctl show-session "$active_session" -p IdleSinceHint --value 2>/dev/null) || return 1
+    current_us=$(date +%s%6N)
+    idle_sec=$(( (current_us - idle_since_us) / 1000000 ))
+    (( idle_sec >= timeout_sec ))
+}
 
 function get_light {
     val=$(cat $light_file)   # eg. (41,0)
@@ -134,7 +151,20 @@ function update_kbd {
     fi
 
     $ML_DEBUG && echo light:$light, kbd_adjusted_at:$kbd_adjusted_at, ML_KBD_BRIGHT: $ML_KBD_BRIGHT
-    if (( light >= ML_BRIGHT_ENOUGH && kbd_adjusted_at < ML_BRIGHT_ENOUGH )); then
+
+    if is_idle_for "$ML_KBD_TIMEOUT"; then
+        $ML_DEBUG && echo "idle for ${ML_KBD_TIMEOUT}s, turning off kbd"
+        kbd_to=0
+        kbd_off_for_idle=true
+    elif $kbd_off_for_idle; then
+        # User returned from idle — restore if it's dark enough, otherwise reset flag
+        kbd_off_for_idle=false
+        if (( light < ML_BRIGHT_ENOUGH )); then
+            kbd_to=$ML_KBD_BRIGHT
+        else
+            kbd_to=$kbd_from
+        fi
+    elif (( light >= ML_BRIGHT_ENOUGH && kbd_adjusted_at < ML_BRIGHT_ENOUGH )); then
         kbd_to=0
     elif (( light < ML_BRIGHT_ENOUGH && kbd_adjusted_at >= ML_BRIGHT_ENOUGH )); then
         kbd_to=$ML_KBD_BRIGHT
@@ -143,7 +173,7 @@ function update_kbd {
     fi
 
     if (( kbd_to == kbd_from )); then
-        $ML_DEBUG && echo "kbd threshold not reached($kbd_from->$kbd_to), skip update"
+        $ML_DEBUG && echo "kbd no change($kbd_from->$kbd_to), skip update"
         return
     fi
     kbd_adjusted_at=$light
