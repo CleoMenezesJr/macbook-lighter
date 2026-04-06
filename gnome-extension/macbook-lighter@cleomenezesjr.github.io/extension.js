@@ -73,18 +73,8 @@ export default class MacbookLighterExtension extends Extension {
         // Primary path (GNOME 48+): set brightness directly on the Meta.Backlight
         // GObject.  This triggers notify::brightness inside gnome-shell's process
         // so the Quick Settings slider updates immediately.
-        try {
-            const mm = global.backend.get_monitor_manager();
-            const backlights = mm.get_backlights();
-            console.log(`[macbook-lighter] get_backlights() returned ${backlights.length} item(s)`);
-            if (backlights.length > 0) {
-                backlights[0].brightness = rawValue;
-                console.log(`[macbook-lighter] Set screen brightness via Meta.Backlight: ${rawValue}`);
-                return;
-            }
-        } catch (e) {
-            console.error(`[macbook-lighter] get_backlights() unavailable: ${e.message}`);
-        }
+        // Meta.Backlight GI API (get_backlights) is not available in this build;
+        // fall through directly to the D-Bus fallback path.
 
         // Fallback path: call org.gnome.Mutter.DisplayConfig.SetBacklight (which
         // updates the Backlight D-Bus property) then emit BrightnessChanged so
@@ -118,14 +108,13 @@ export default class MacbookLighterExtension extends Extension {
             null,
             (conn, res) => {
                 try {
-                    const [backlight] = conn.call_finish(res).deepUnpack();
-                    console.log(`[macbook-lighter] Backlight type: ${typeof backlight}, isArray: ${Array.isArray(backlight)}, value: ${JSON.stringify(backlight)}`);
-
-                    // The Backlight property is (ua(sa{sv})): [serial, [[connector, props], ...]]
-                    const [serial, monitors] = backlight;
-                    // monitors[0] is a (sa{sv}) tuple: [connectorString, propsObject]
-                    const connector = monitors[0][0];
-                    console.log(`[macbook-lighter] serial=${serial}, connector=${connector}`);
+                    const result = conn.call_finish(res);
+                    // Backlight property type is (uaa{sv}):
+                    //   u  = serial
+                    //   aa{sv} = array of monitor dicts {connector, active, min, max, value}
+                    const innerVariant = result.get_child_value(0).get_variant();
+                    const [serial, monitors] = innerVariant.recursiveUnpack();
+                    const connector = monitors[0].connector;
                     callback(serial, connector);
                 } catch (e) {
                     console.error(`[macbook-lighter] Failed to read Backlight property: ${e.message}`);
