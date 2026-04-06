@@ -45,7 +45,8 @@ active_uid=$(loginctl show-seat seat0 -p ActiveUser --value 2>/dev/null)
 
 #####################################################
 # Private States
-screen_adjusted_at=0
+screen_user_offset=0  # learned from manual slider adjustments
+screen_last_set=0     # last brightness value written by this script
 kbd_adjusted_at=0
 kbd_off_for_idle=false
 
@@ -130,17 +131,43 @@ function screen_range {
     fi
 }
 
+function screen_target {
+    # Logarithmic mapping: sensor [1..ML_BRIGHT_ENOUGH] → brightness [ML_SCREEN_MIN_BRIGHT..screen_max]
+    # log(1)=0 → min; log(ML_BRIGHT_ENOUGH)/log(ML_BRIGHT_ENOUGH)=1 → max.
+    # Logarithmic feels natural because human brightness perception is also logarithmic.
+    # Multiplied by battery coefficient when on battery.
+    local light=$1
+    local coef base
+    coef=$(power_coef)
+    base=$(echo "scale=0; ($screen_max - $ML_SCREEN_MIN_BRIGHT) * l($light) / l($ML_BRIGHT_ENOUGH) + $ML_SCREEN_MIN_BRIGHT" | bc -l)
+    echo $(echo "scale=0; $base * $coef / 1" | bc -l)
+}
+
 function update_screen {
     light=$1
     screen_from=$(cat $screen_file)
-    screen_to=$(echo "$screen_from * $light / $screen_adjusted_at" | bc)
+
+    # Detect manual brightness adjustment (user moved the slider between our writes)
+    if (( screen_last_set > 0 && screen_from != screen_last_set )); then
+        local formula
+        formula=$(screen_target $light)
+        formula=$(screen_range $formula)
+        screen_user_offset=$(( screen_from - formula ))
+        $ML_DEBUG && echo "manual adjust detected, new offset: $screen_user_offset"
+        screen_last_set=$screen_from
+        return
+    fi
+
+    screen_to=$(( $(screen_target $light) + screen_user_offset ))
     screen_to=$(screen_range $screen_to)
+
     if (( screen_to - screen_from > -ML_SCREEN_THRESHOLD && screen_to - screen_from < ML_SCREEN_THRESHOLD )); then
         $ML_DEBUG && echo "screen threshold not reached($screen_from->$screen_to), skip update"
         return
     fi
-    screen_adjusted_at=$light
+
     transition $screen_from $screen_to $screen_file
+    screen_last_set=$screen_to
 }
 
 function update_kbd {
@@ -214,23 +241,19 @@ function init {
     $ML_DEBUG && echo initializing backlights...
 
     light=$(get_light)
-
-    screen_adjusted_at=$light
     kbd_adjusted_at=$light
-    if (( light >= ML_BRIGHT_ENOUGH )); then
-        screen_to=$screen_max
-        kbd_to=0
-    else
-        coef=$(power_coef)
-        screen_to=$(echo "1.2 * $coef * $screen_max * $light / $ML_BRIGHT_ENOUGH" | bc)
-        screen_to=$(screen_range $screen_to)
-        kbd_to=$ML_KBD_BRIGHT
-    fi
 
     screen_from=$(cat $screen_file)
     kbd_from=$(cat $kbd_file)
 
-    $ML_AUTO_SCREEN && transition $screen_from $screen_to $screen_file
+    if $ML_AUTO_SCREEN; then
+        screen_to=$(( $(screen_target $light) + screen_user_offset ))
+        screen_to=$(screen_range $screen_to)
+        transition $screen_from $screen_to $screen_file
+        screen_last_set=$screen_to
+    fi
+
+    kbd_to=$(( light >= ML_BRIGHT_ENOUGH ? 0 : ML_KBD_BRIGHT ))
     $ML_AUTO_KBD && transition $kbd_from $kbd_to $kbd_file
 }
 
