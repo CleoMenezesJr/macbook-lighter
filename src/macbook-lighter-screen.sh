@@ -43,7 +43,6 @@ notify_brightness() {
 }
 
 screen_set() {
-    echo $1 > $device
     notify_brightness "$1"
     echo set to $1
 }

@@ -4,13 +4,13 @@
 // Why this extension exists:
 //   Mutter silently updates its internal state when it detects external sysfs
 //   writes via udev (to avoid feedback loops), so notify::brightness is never
-//   emitted and the Quick Settings slider never moves.  The only reliable fix
-//   is to run code inside gnome-shell's process that can either poke the
-//   Meta.Backlight GObject directly (GNOME 48+) or call SetBacklight via D-Bus
-//   and then emit BrightnessChanged so the slider re-reads the new value.
+//   emitted and the Quick Settings slider never moves.  The fix is to update
+//   Main.brightnessManager.globalScale.value from inside gnome-shell's process,
+//   which triggers notify::value and moves the slider.
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const IFACE_XML = `
@@ -70,20 +70,18 @@ export default class MacbookLighterExtension extends Extension {
     // ── Screen ───────────────────────────────────────────────────────────────
 
     _setScreenBrightness(rawValue) {
-        // Primary path (GNOME 48+): set brightness directly on the Meta.Backlight
-        // GObject.  This triggers notify::brightness inside gnome-shell's process
-        // so the Quick Settings slider updates immediately.
-        // Meta.Backlight GI API (get_backlights) is not available in this build;
-        // fall through directly to the D-Bus fallback path.
+        // GNOME 50+: brightnessManager owns the globalScale that the Quick
+        // Settings slider binds to.  Setting its value (0.0–1.0) moves the
+        // slider and writes back to the hardware via setBacklight().
+        if (Main.brightnessManager?.globalScale) {
+            this._setViaManager(rawValue);
+            return;
+        }
 
-        // Fallback path: call org.gnome.Mutter.DisplayConfig.SetBacklight (which
-        // updates the Backlight D-Bus property) then emit BrightnessChanged so
-        // the brightness item calls _sync() and re-reads the new value.
+        // Fallback for older GNOME builds (45–49): call SetBacklight then
+        // emit BrightnessChanged so the brightness item refreshes.
         this._fetchBacklightInfo((serial, connector) => {
             this._callSetBacklight(serial, connector, rawValue, () => {
-                // Emit BrightnessChanged on Shell's own connection so that the
-                // brightness item's signal subscription (sender='org.gnome.Shell')
-                // matches and _sync() is called.
                 Gio.DBus.session.emit_signal(
                     null,
                     '/org/gnome/Shell/Brightness',
@@ -93,6 +91,33 @@ export default class MacbookLighterExtension extends Extension {
                 );
             });
         });
+    }
+
+    // Normalize rawValue to 0.0–1.0 using the monitor's backlight range, then
+    // set globalScale.value so the Quick Settings slider updates immediately.
+    _setViaManager(rawValue) {
+        try {
+            const monitorManager = global.backend.get_monitor_manager();
+            for (const lm of monitorManager.get_logical_monitors()) {
+                for (const m of lm.get_monitors()) {
+                    const bl = m.get_backlight();
+                    if (!bl)
+                        continue;
+                    // is_active() may not exist on all builds; treat missing as active
+                    if (m.is_active && !m.is_active())
+                        continue;
+
+                    const {brightnessMin: min, brightnessMax: max} = bl;
+                    const normalized = (rawValue - min) / (max - min);
+                    Main.brightnessManager.globalScale.value =
+                        Math.max(0.0, Math.min(1.0, normalized));
+                    return;
+                }
+            }
+            console.warn('[macbook-lighter] No active backlight found via monitor manager');
+        } catch (e) {
+            console.error(`[macbook-lighter] _setViaManager error: ${e.message}`);
+        }
     }
 
     _fetchBacklightInfo(callback) {
@@ -110,7 +135,7 @@ export default class MacbookLighterExtension extends Extension {
                 try {
                     const result = conn.call_finish(res);
                     // Backlight property type is (uaa{sv}):
-                    //   u  = serial
+                    //   u      = serial
                     //   aa{sv} = array of monitor dicts {connector, active, min, max, value}
                     const innerVariant = result.get_child_value(0).get_variant();
                     const [serial, monitors] = innerVariant.recursiveUnpack();
