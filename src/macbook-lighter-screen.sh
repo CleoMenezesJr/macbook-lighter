@@ -27,7 +27,9 @@ screen_help () {
 notify_brightness() {
     local value="$1" session uid
     session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null) || true
-    uid=$(loginctl show-session "$session" -p User --value 2>/dev/null) || true
+    uid=$(loginctl show-session "$session" -p UID --value 2>/dev/null) || true
+    # Fallback to current user's UID when running interactively
+    [ -z "$uid" ] && uid="$(id -u)"
 
     [ -n "$session" ] && busctl call org.freedesktop.login1 \
         "/org/freedesktop/login1/session/$session" \
