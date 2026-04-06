@@ -27,7 +27,7 @@ kbd_help () {
 notify_brightness() {
     local value="$1" session uid percent
     session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null) || true
-    uid=$(loginctl show-seat seat0 -p ActiveUser --value 2>/dev/null) || true
+    uid=$(loginctl show-session "$session" -p User --value 2>/dev/null) || true
 
     [ -n "$session" ] && busctl call org.freedesktop.login1 \
         "/org/freedesktop/login1/session/$session" \
