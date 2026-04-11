@@ -42,6 +42,8 @@ done
 screen_max=$(cat $intel_dir/max_brightness)
 active_session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
 active_uid=$(loginctl show-session "$active_session" -p UID --value 2>/dev/null)
+# Fallback to current user when running interactively
+[ -z "$active_uid" ] && active_uid="$(id -u)"
 
 #####################################################
 # Private States
