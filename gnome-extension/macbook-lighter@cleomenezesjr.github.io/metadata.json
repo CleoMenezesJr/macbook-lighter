@@ -2,7 +2,7 @@
   "uuid": "macbook-lighter@cleomenezesjr.github.io",
   "name": "Macbook Lighter Sync",
   "description": "Syncs the GNOME brightness slider when macbook-lighter scripts change brightness.",
-  "shell-version": ["45", "46", "47", "48", "49", "50"],
-  "version": 1,
+  "shell-version": ["47", "48", "49", "50"],
+  "version": 2,
   "url": "https://github.com/cleomenezesjr/macbook-lighter"
 }

@@ -39,7 +39,7 @@ notify_brightness() {
     [ -n "$uid" ] && DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
         /usr/bin/gdbus call --session \
         --dest org.gnome.Shell.Extensions.MacbookLighter \
-        --object-path /org/gnome/Shell/Extensions/MacbookLighter \
+        --object-path /org/gnome/Shell/Extensions.MacbookLighter \
         --method org.gnome.Shell.Extensions.MacbookLighter.SetScreenBrightness \
         "uint32 $value" 2>/dev/null || true
 }

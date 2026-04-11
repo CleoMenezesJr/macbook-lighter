@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Syncs the GNOME brightness slider with macbook-lighter sysfs writes.
-//
-// Why this extension exists:
-//   Mutter silently updates its internal state when it detects external sysfs
-//   writes via udev (to avoid feedback loops), so notify::brightness is never
-//   emitted and the Quick Settings slider never moves.
-//
-//   The fix: macbook-lighter scripts call SetScreenBrightness after writing to
-//   hardware.  The extension then calls syncWithBacklight() on each
-//   MonitorBrightnessScale, which re-reads the brightness from Mutter
-//   (already up-to-date via udev) and updates the slider — with no hardware
-//   write and no OSD.
+/**
+ * macbook-lighter GNOME Shell Extension
+ * 
+ * Provides a D-Bus interface for the macbook-lighter daemon to synchronize
+ * hardware backlight levels with the GNOME Shell Quick Settings brightness slider.
+ * 
+ * Implements a "Silent Sync" mechanism that updates the UI visuals without
+ * triggering the system On-Screen Display (OSD), ensuring background adjustments
+ * are non-intrusive for the user.
+ */
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -31,98 +29,124 @@ const IFACE_XML = `
 
 export default class MacbookLighterExtension extends Extension {
     enable() {
-        const ifaceInfo = Gio.DBusNodeInfo.new_for_xml(IFACE_XML).interfaces[0];
-
-        this._regId = Gio.DBus.session.register_object(
-            '/org/gnome/Shell/Extensions/MacbookLighter',
-            ifaceInfo,
-            this._handleMethodCall.bind(this),
-            null,
-            null,
-        );
-
-        this._ownerId = Gio.DBus.session.own_name(
-            'org.gnome.Shell.Extensions.MacbookLighter',
-            Gio.BusNameOwnerFlags.NONE,
-            null,
-            null,
-        );
+        try {
+            // Register D-Bus object to listen for brightness change signals from the daemon
+            const ifaceInfo = Gio.DBusNodeInfo.new_for_xml(IFACE_XML).interfaces[0];
+            this._regId = Gio.DBus.session.register_object(
+                '/org/gnome/Shell/Extensions/MacbookLighter',
+                ifaceInfo, this._handleMethodCall.bind(this), null, null
+            );
+            this._ownerId = Gio.DBus.session.own_name(
+                'org.gnome.Shell.Extensions.MacbookLighter',
+                Gio.BusNameOwnerFlags.NONE, null, null
+            );
+        } catch (e) {
+            logError(e, '[macbook-lighter] Registration failed');
+        }
     }
 
     disable() {
-        if (this._ownerId) {
-            Gio.DBus.session.unown_name(this._ownerId);
-            this._ownerId = null;
-        }
-        if (this._regId) {
-            Gio.DBus.session.unregister_object(this._regId);
-            this._regId = null;
-        }
+        if (this._ownerId) Gio.DBus.session.unown_name(this._ownerId);
+        if (this._regId) Gio.DBus.session.unregister_object(this._regId);
     }
 
     _handleMethodCall(_conn, _sender, _path, _iface, method, params, invocation) {
         const [value] = params.deepUnpack();
-
-        if (method === 'SetScreenBrightness')
-            this._syncScreenSlider();
-        else if (method === 'SetKeyboardBrightness')
-            this._setKeyboardBrightness(value);
-
+        if (method === 'SetScreenBrightness') this._syncScreenSlider(value);
+        else if (method === 'SetKeyboardBrightness') this._setKeyboardBrightness(value);
         invocation.return_value(null);
     }
 
-    // ── Screen ───────────────────────────────────────────────────────────────
-
-    // Called after the script writes brightness to hardware (via logind/sysfs).
-    // Mutter has already silently updated its internal backlight state via udev.
-    // syncWithBacklight() reads Mutter's current value and updates the Quick
-    // Settings slider — without writing to hardware or showing an OSD.
-    _syncScreenSlider() {
-        if (!Main.brightnessManager)
-            return;
-
-        // In 45-46 it was .scales (array), in 47+ it is often ._scales (Set).
-        // Using a more resilient way to iterate over the collection.
-        const scales = Main.brightnessManager.scales ?? Main.brightnessManager._scales ?? [];
-        for (const scale of scales)
-            scale.syncWithBacklight?.();
-
-        // Fallback: search directly in Quick Settings if the manager structure changed.
+    /**
+     * Helper to read hardware state from sysfs
+     */
+    _readSysfs(path) {
         try {
+            const file = Gio.File.new_for_path(path);
+            const [success, contents] = file.load_contents(null);
+            if (success) return parseInt(new TextDecoder().decode(contents).trim());
+        } catch (e) {}
+        return null;
+    }
+
+    /**
+     * Orchestrates the synchronization of the screen brightness slider
+     */
+    _syncScreenSlider(passedValue) {
+        // Prefer direct sysfs read for maximum accuracy during hardware-triggered sync
+        const brightness = this._readSysfs('/sys/class/backlight/intel_backlight/brightness') ?? passedValue;
+        const max = this._readSysfs('/sys/class/backlight/intel_backlight/max_brightness') ?? 100;
+        const percent = brightness / max;
+
+        // Brief delay to allow hardware stabilization before UI update
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+             this._applySilentSync(percent);
+             return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    /**
+     * Multi-layered "Silent Sync" implementation.
+     * 1. Temporarily hijacks the OSD window manager to suppress pop-ups.
+     * 2. Updates the slider's Adjustment object to ensure visual movement.
+     * 3. Disconnects OSD suppression after a small safety margin.
+     */
+    _applySilentSync(percent) {
+        try {
+            const osd = Main.osdWindowManager;
+            let originalShow = null;
+            
+            // Suppress OSD by temporarily overriding the show method
+            if (osd) {
+                const methods = ['show', '_show', 'showNow'];
+                for (let m of methods) {
+                    if (typeof osd[m] === 'function') {
+                        originalShow = { name: m, func: osd[m] };
+                        osd[m] = () => {}; // Mute
+                        break;
+                    }
+                }
+            }
+
+            // Target the Quick Settings brightness slider
             const qs = Main.panel.statusArea.quickSettings;
-            if (qs && qs._brightness?._slider)
-                qs._brightness._slider.syncWithBacklight?.();
+            if (qs && qs.menu?._grid) {
+                qs.menu._grid.get_children().forEach(child => {
+                    const name = child.constructor.name;
+                    if (name === 'BrightnessItem') {
+                        const slider = child.slider || child._slider;
+                        if (slider) {
+                            // Update adjustment directly to force visual synchronization
+                            const adj = slider.adjustment || slider._adjustment;
+                            if (adj) adj.value = percent;
+                            else slider.value = percent;
+                        }
+                    }
+                });
+            }
+
+            // Restore OSD functionality
+            if (originalShow) {
+                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                    osd[originalShow.name] = originalShow.func;
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+
         } catch (e) {
-            // Path not found, ignore
+             console.error(`[macbook-lighter] Sync Error: ${e.message}`);
         }
     }
 
-    // ── Keyboard ─────────────────────────────────────────────────────────────
-
+    /**
+     * Forwards keyboard brightness updates to GNOME Settings Daemon
+     */
     _setKeyboardBrightness(percent) {
-        // gsd-power exposes Brightness as a readwrite property (0-100).
-        // Setting it updates both the hardware and the Quick Settings slider.
         Gio.DBus.session.call(
-            'org.gnome.SettingsDaemon.Power',
-            '/org/gnome/SettingsDaemon/Power',
-            'org.freedesktop.DBus.Properties',
-            'Set',
-            new GLib.Variant('(ssv)', [
-                'org.gnome.SettingsDaemon.Power.Keyboard',
-                'Brightness',
-                new GLib.Variant('i', percent),
-            ]),
-            null,
-            Gio.DBusCallFlags.NONE,
-            -1,
-            null,
-            (conn, res) => {
-                try {
-                    conn.call_finish(res);
-                } catch (e) {
-                    console.error(`[macbook-lighter] SetKeyboardBrightness failed: ${e.message}`);
-                }
-            },
+            'org.gnome.SettingsDaemon.Power', '/org/gnome/SettingsDaemon/Power',
+            'org.freedesktop.DBus.Properties', 'Set',
+            new GLib.Variant('(ssv)', ['org.gnome.SettingsDaemon.Power.Keyboard', 'Brightness', new GLib.Variant('i', percent)]),
+            null, Gio.DBusCallFlags.NONE, -1, null, () => {}
         );
     }
 }

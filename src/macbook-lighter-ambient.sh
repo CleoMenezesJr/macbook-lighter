@@ -87,7 +87,7 @@ function notify_brightness {
         [ -n "$active_uid" ] && DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${active_uid}/bus" \
             /usr/bin/gdbus call --session \
             --dest org.gnome.Shell.Extensions.MacbookLighter \
-            --object-path /org/gnome/Shell/Extensions/MacbookLighter \
+            --object-path /org/gnome/Shell/Extensions.MacbookLighter \
             --method org.gnome.Shell.Extensions.MacbookLighter.SetScreenBrightness \
             "uint32 $value" 2>/dev/null || true
     else
@@ -102,7 +102,7 @@ function notify_brightness {
             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${active_uid}/bus" \
                 /usr/bin/gdbus call --session \
                 --dest org.gnome.Shell.Extensions.MacbookLighter \
-                --object-path /org/gnome/Shell/Extensions/MacbookLighter \
+                --object-path /org/gnome/Shell/Extensions.MacbookLighter \
                 --method org.gnome.Shell.Extensions.MacbookLighter.SetKeyboardBrightness \
                 "uint32 $percent" 2>/dev/null || true
         fi
