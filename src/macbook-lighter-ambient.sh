@@ -247,10 +247,12 @@ function init {
     kbd_from=$(cat $kbd_file)
 
     if $ML_AUTO_SCREEN; then
-        screen_to=$(( $(screen_target $light) + screen_user_offset ))
-        screen_to=$(screen_range $screen_to)
-        transition $screen_from $screen_to $screen_file
-        screen_last_set=$screen_to
+        local formula
+        formula=$(screen_target $light)
+        formula=$(screen_range $formula)
+        screen_user_offset=$(( screen_from - formula ))
+        screen_last_set=$screen_from
+        $ML_DEBUG && echo "init: brightness=$screen_from, base=$formula, offset=$screen_user_offset"
     fi
 
     kbd_to=$(( light >= ML_BRIGHT_ENOUGH ? 0 : ML_KBD_BRIGHT ))
