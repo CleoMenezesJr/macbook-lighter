@@ -81,8 +81,20 @@ export default class MacbookLighterExtension extends Extension {
         if (!Main.brightnessManager)
             return;
 
-        for (const scale of (Main.brightnessManager.scales ?? []))
+        // In 45-46 it was .scales (array), in 47+ it is often ._scales (Set).
+        // Using a more resilient way to iterate over the collection.
+        const scales = Main.brightnessManager.scales ?? Main.brightnessManager._scales ?? [];
+        for (const scale of scales)
             scale.syncWithBacklight?.();
+
+        // Fallback: search directly in Quick Settings if the manager structure changed.
+        try {
+            const qs = Main.panel.statusArea.quickSettings;
+            if (qs && qs._brightness?._slider)
+                qs._brightness._slider.syncWithBacklight?.();
+        } catch (e) {
+            // Path not found, ignore
+        }
     }
 
     // ── Keyboard ─────────────────────────────────────────────────────────────
