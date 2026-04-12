@@ -183,31 +183,45 @@ function set_bin_offset {
     $ML_DEBUG && echo "offset[$bin] = $value"
 }
 
+function get_active_session {
+    loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null
+}
+
+function get_active_uid {
+    local session=$(get_active_session)
+    local uid=$(loginctl show-session "$session" -p UID --value 2>/dev/null)
+    [ -z "$uid" ] && uid="$(id -u)"
+    echo "$uid"
+}
+
 function notify_brightness {
     local dev=$1
     local value=$2
 
+    local current_session=$(get_active_session)
+    local current_uid=$(get_active_uid)
+
     if [ "$dev" = "$screen_file" ]; then
-        [ -n "$active_session" ] && busctl call org.freedesktop.login1 \
-            "/org/freedesktop/login1/session/$active_session" \
+        [ -n "$current_session" ] && busctl call org.freedesktop.login1 \
+            "/org/freedesktop/login1/session/$current_session" \
             org.freedesktop.login1.Session SetBrightness "ssu" \
             "backlight" "intel_backlight" "$value" 2>/dev/null || true
-        [ -n "$active_uid" ] && DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${active_uid}/bus" \
+        [ -n "$current_uid" ] && DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${current_uid}/bus" \
             /usr/bin/gdbus call --session \
             --dest org.gnome.Shell.Extensions.MacbookLighter \
             --object-path /org/gnome/Shell/Extensions/MacbookLighter \
             --method org.gnome.Shell.Extensions.MacbookLighter.SetScreenBrightness \
             "uint32 $value" 2>/dev/null || true
     else
-        [ -n "$active_session" ] && busctl call org.freedesktop.login1 \
-            "/org/freedesktop/login1/session/$active_session" \
+        [ -n "$current_session" ] && busctl call org.freedesktop.login1 \
+            "/org/freedesktop/login1/session/$current_session" \
             org.freedesktop.login1.Session SetBrightness "ssu" \
             "leds" "smc::kbd_backlight" "$value" 2>/dev/null || true
-        if [ -n "$active_uid" ]; then
+        if [ -n "$current_uid" ]; then
             local kbd_max percent
             kbd_max=$(cat $kbd_dir/max_brightness)
             percent=$(( value * 100 / kbd_max ))
-            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${active_uid}/bus" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${current_uid}/bus" \
                 /usr/bin/gdbus call --session \
                 --dest org.gnome.Shell.Extensions.MacbookLighter \
                 --object-path /org/gnome/Shell/Extensions/MacbookLighter \
