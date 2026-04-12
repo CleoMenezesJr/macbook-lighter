@@ -117,11 +117,8 @@ ML_FRAME=0.017
 # Polling interval (seconds)
 ML_INTERVAL=5
 
-# Ambient light level considered "bright enough" to turn off keyboard backlight
-ML_BRIGHT_ENOUGH=40
-
-# Minimum change in light required to trigger a screen update
-ML_SCREEN_THRESHOLD=10
+# Ambient light level considered "bright enough" (sensor range ceiling)
+ML_BRIGHT_ENOUGH=8
 
 # Minimum screen brightness in complete darkness
 ML_SCREEN_MIN_BRIGHT=15
@@ -132,11 +129,32 @@ ML_KBD_BRIGHT=128
 # Dim factor when on battery (0.0–1.0)
 ML_BATTERY_DIM=0.2
 
+# Turn off keyboard backlight after N seconds of inactivity (0 = disabled)
+ML_KBD_TIMEOUT=30
+
 # Enable automatic keyboard backlight adjustment
 ML_AUTO_KBD=true
 
 # Enable automatic screen backlight adjustment
 ML_AUTO_SCREEN=true
+
+# Sub-samples per poll for median filter (noise rejection)
+ML_SENSOR_SAMPLES=3
+
+# Seconds between sub-samples
+ML_SENSOR_SAMPLE_DELAY=0.3
+
+# EWMA smoothing factor (0.0–1.0, lower = smoother)
+ML_EWMA_ALPHA=0.2
+
+# Proportional dead-band percentage to prevent oscillation
+ML_HYSTERESIS_PCT=15
+
+# Polls to confirm before brightening (fast response)
+ML_BRIGHTEN_CONFIRMS=1
+
+# Polls to confirm before dimming (slow response, avoids shadow reactions)
+ML_DIM_CONFIRMS=3
 
 # Print debug output to stdout
 ML_DEBUG=false
