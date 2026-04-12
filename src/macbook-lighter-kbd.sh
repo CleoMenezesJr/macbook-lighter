@@ -41,7 +41,7 @@ notify_brightness() {
         DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
             /usr/bin/gdbus call --session \
             --dest org.gnome.Shell.Extensions.MacbookLighter \
-            --object-path /org/gnome/Shell/Extensions.MacbookLighter \
+            --object-path /org/gnome/Shell/Extensions/MacbookLighter \
             --method org.gnome.Shell.Extensions.MacbookLighter.SetKeyboardBrightness \
             "uint32 $percent" 2>/dev/null || true
     fi
