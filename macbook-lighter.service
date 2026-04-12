@@ -1,10 +1,12 @@
 [Unit]
-Description=Macbook screen backlight on the ambient light
+Description=Macbook screen backlight on the ambient light (User Service)
 Documentation=https://github.com/cleomenezesjr/macbook-lighter
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/macbook-lighter-ambient
+Restart=always
+RestartSec=10
 
 [Install]
-WantedBy=multi-user.target 
+WantedBy=default.target

@@ -6,51 +6,61 @@ Tested on:
 - MacBook Air A1466
 - MacBook Pro Late 2013 (11,1)
 - MacBook Air 2012
+- MacBook Air 2017
 
 ## How it works
 
-`macbook-lighter-ambient` runs as a systemd daemon and reads the ambient light sensor to
-adjust screen and keyboard brightness automatically. It reads and writes the following files:
+`macbook-lighter-ambient` runs as a systemd **user daemon** and reads the ambient light sensor to
+adjust screen and keyboard brightness automatically. 
 
-- `/sys/devices/platform/applesmc.768/light` — ambient light sensor
-- `/sys/class/backlight/intel_backlight/brightness`
-- `/sys/class/backlight/intel_backlight/max_brightness`
-- `/sys/class/leds/smc::kbd_backlight/brightness`
-- `/sys/class/leds/smc::kbd_backlight/max_brightness`
-
-After each brightness transition, the daemon notifies the desktop session via
-`systemd-logind` so that the brightness slider stays in sync.
+By running as a user service, the daemon has native access to the desktop's D-Bus bus, allowing for 
+silent synchronization with the GNOME Quick Settings slider without requiring root privileges or complex session discovery.
 
 ## Dependencies
 
 - `bc` — arithmetic in brightness transitions
-- `systemd` — service management and `busctl` for desktop session sync
+- `systemd` — user service management and `gdbus` for desktop session sync
 
 ## Installation
 
+### Standard Installation
+
+The easiest way to install `macbook-lighter` is using the provided `Makefile`:
+
 ```bash
-sudo install -Dm644 macbook-lighter.conf /etc/macbook-lighter.conf
-sudo install -Dm644 macbook-lighter.service /usr/lib/systemd/system/macbook-lighter.service
-sudo install -Dm755 src/macbook-lighter-ambient.sh /usr/bin/macbook-lighter-ambient
-sudo install -Dm755 src/macbook-lighter-screen.sh /usr/bin/macbook-lighter-screen
-sudo install -Dm755 src/macbook-lighter-kbd.sh /usr/bin/macbook-lighter-kbd
+git clone https://github.com/CleoMenezesJr/macbook-lighter.git
+cd macbook-lighter
+sudo make install
 ```
 
-Then enable and start the daemon:
+Then enable and start the daemon as a **user service**:
 
 ```bash
-sudo systemctl enable --now macbook-lighter
+systemctl --user enable --now macbook-lighter
+```
+
+### Immutable / Bootc Systems Integration
+
+For systems like Fedora Silverblue or `bootc` based images, you can bake `macbook-lighter` directly into your image. In your `Containerfile`/`Dockerfile`, add:
+
+```dockerfile
+# Build-time installation
+RUN git clone --depth 1 https://github.com/CleoMenezesJr/macbook-lighter.git /tmp/macbook-lighter && \
+    cd /tmp/macbook-lighter && \
+    make install DESTDIR=/ && \
+    cd / && rm -rf /tmp/macbook-lighter
+
+# Enable the service globally for all users
+RUN systemctl --global enable macbook-lighter.service
 ```
 
 ## Setup
 
-### Allow non-root users to set brightness
+### Hardware Access (Udev Rules)
 
-To use `macbook-lighter-kbd` and `macbook-lighter-screen` without root, add your user to
-the `video` group and create the following udev rules.
+To allow a user service to modify brightness without root, you must install the following udev rules and add your user to the `video` group.
 
 `/etc/udev/rules.d/90-backlight.rules`:
-
 ```
 SUBSYSTEM=="backlight", ACTION=="add", \
   RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness", \
@@ -58,49 +68,15 @@ SUBSYSTEM=="backlight", ACTION=="add", \
 ```
 
 `/etc/udev/rules.d/91-leds.rules`:
-
 ```
 SUBSYSTEM=="leds", ACTION=="add", \
   RUN+="/bin/chgrp video /sys/class/leds/%k/brightness", \
   RUN+="/bin/chmod g+w /sys/class/leds/%k/brightness"
 ```
 
-Then add yourself to the group and reboot:
-
+Add your user to the group:
 ```bash
 sudo usermod -aG video $USER
-```
-
-### Keyboard shortcuts (GNOME)
-
-Open **Settings → Keyboard → Custom Shortcuts** and add entries such as:
-
-| Name                    | Command                          |
-|-------------------------|----------------------------------|
-| Increase screen brightness | `macbook-lighter-screen --inc 50` |
-| Decrease screen brightness | `macbook-lighter-screen --dec 50` |
-| Increase keyboard brightness | `macbook-lighter-kbd --inc 50` |
-| Decrease keyboard brightness | `macbook-lighter-kbd --dec 50` |
-
-This requires the udev rules above so the commands run without root.
-
-## Usage
-
-```bash
-# Increase keyboard backlight by 50
-macbook-lighter-kbd --inc 50
-
-# Decrease screen backlight by 50
-macbook-lighter-screen --dec 50
-
-# Set screen backlight to max
-macbook-lighter-screen --max
-
-# Start the auto-adjust daemon
-sudo systemctl start macbook-lighter
-
-# Run the daemon interactively (requires root)
-sudo macbook-lighter-ambient
 ```
 
 ## Configuration
@@ -111,51 +87,28 @@ The daemon reads `/etc/macbook-lighter.conf` on startup. Edit it to tune behavio
 # Duration of each brightness transition (seconds)
 ML_DURATION=1.5
 
-# Time per animation frame (seconds)
-ML_FRAME=0.017
-
 # Polling interval (seconds)
 ML_INTERVAL=5
-
-# Ambient light level considered "bright enough" (sensor range ceiling)
-ML_BRIGHT_ENOUGH=8
-
-# Minimum screen brightness in complete darkness
-ML_SCREEN_MIN_BRIGHT=15
-
-# Keyboard brightness level when dark
-ML_KBD_BRIGHT=128
-
-# Dim factor when on battery (0.0–1.0)
-ML_BATTERY_DIM=0.2
-
-# Turn off keyboard backlight after N seconds of inactivity (0 = disabled)
-ML_KBD_TIMEOUT=30
-
-# Enable automatic keyboard backlight adjustment
-ML_AUTO_KBD=true
-
-# Enable automatic screen backlight adjustment
-ML_AUTO_SCREEN=true
-
-# Sub-samples per poll for median filter (noise rejection)
-ML_SENSOR_SAMPLES=3
-
-# Seconds between sub-samples
-ML_SENSOR_SAMPLE_DELAY=0.3
-
-# EWMA smoothing factor (0.0–1.0, lower = smoother)
-ML_EWMA_ALPHA=0.2
 
 # Proportional dead-band percentage to prevent oscillation
 ML_HYSTERESIS_PCT=15
 
-# Polls to confirm before brightening (fast response)
-ML_BRIGHTEN_CONFIRMS=1
-
-# Polls to confirm before dimming (slow response, avoids shadow reactions)
+# Polls to confirm before dimming (slow response)
 ML_DIM_CONFIRMS=3
 
-# Print debug output to stdout
-ML_DEBUG=false
+# Enable automatic keyboard adjustment
+ML_AUTO_KBD=true
+```
+
+## Usage
+
+```bash
+# Increase keyboard backlight by 50
+macbook-lighter-kbd --inc 50
+
+# Increase screen backlight by 50
+macbook-lighter-screen --inc 50
+
+# Check daemon logs
+journalctl --user -u macbook-lighter -f
 ```

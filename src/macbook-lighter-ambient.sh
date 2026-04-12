@@ -33,7 +33,7 @@ ML_DIM_CONFIRMS=${ML_DIM_CONFIRMS:-3}
 #####################################################
 # wait drivers loaded
 
-$ML_DEBUG && echo checking $intel_dir and $kbd_dir...
+$ML_DEBUG && echo "checking $intel_dir and $kbd_dir..."
 wait_timeout=30
 waited=0
 while [ ! -d $intel_dir -o ! -d $kbd_dir ]; do
@@ -45,10 +45,6 @@ while [ ! -d $intel_dir -o ! -d $kbd_dir ]; do
     (( waited++ ))
 done
 screen_max=$(cat $intel_dir/max_brightness)
-active_session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
-active_uid=$(loginctl show-session "$active_session" -p UID --value 2>/dev/null)
-# Fallback to current user when running interactively
-[ -z "$active_uid" ] && active_uid="$(id -u)"
 
 #####################################################
 # Private States
@@ -66,13 +62,13 @@ kbd_off_for_idle=false
 function is_idle_for {
     local timeout_sec=$1
     (( timeout_sec <= 0 )) && return 1
-    [ -z "$active_session" ] && return 1
 
-    local idle_hint idle_since_us current_us idle_sec
-    idle_hint=$(loginctl show-session "$active_session" -p IdleHint --value 2>/dev/null) || return 1
+    local idle_hint
+    idle_hint=$(loginctl show-session --property=IdleHint --value 2>/dev/null)
     [ "$idle_hint" = "yes" ] || return 1
 
-    idle_since_us=$(loginctl show-session "$active_session" -p IdleSinceHint --value 2>/dev/null) || return 1
+    local idle_since_us current_us idle_sec
+    idle_since_us=$(loginctl show-session --property=IdleSinceHint --value 2>/dev/null) || return 1
     current_us=$(date +%s%6N)
     idle_sec=$(( (current_us - idle_since_us) / 1000000 ))
     (( idle_sec >= timeout_sec ))
@@ -183,60 +179,27 @@ function set_bin_offset {
     $ML_DEBUG && echo "offset[$bin] = $value"
 }
 
-function get_active_user_info {
-    local session
-    session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
-    if [ -n "$session" ]; then
-        local uid
-        uid=$(loginctl show-session "$session" -p UID --value 2>/dev/null)
-        if [ -n "$uid" ]; then
-            echo "$uid $session"
-            return 0
-        fi
-    fi
-    return 1
-}
-
 function notify_brightness {
     local dev=$1
     local value=$2
 
-    read -r current_uid current_session <<< "$(get_active_user_info)"
-
     if [ "$dev" = "$screen_file" ]; then
-        # Inform logind (system bus)
-        [ -n "$current_session" ] && busctl call org.freedesktop.login1 \
-            "/org/freedesktop/login1/session/$current_session" \
-            org.freedesktop.login1.Session SetBrightness "ssu" \
-            "backlight" "intel_backlight" "$value" 2>/dev/null || true
-            
-        # Inform GNOME Shell (as the user)
-        if [ -n "$current_uid" ]; then
-            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${current_uid}/bus" \
-            sudo -u "#${current_uid}" /usr/bin/gdbus call --session \
-                --dest org.gnome.Shell.Extensions.MacbookLighter \
-                --object-path /org/gnome/Shell/Extensions/MacbookLighter \
-                --method org.gnome.Shell.Extensions.MacbookLighter.SetScreenBrightness \
-                "uint32 $value" 2>/dev/null || true
-        fi
+        # Inform GNOME Shell (Extension D-Bus)
+        /usr/bin/gdbus call --session \
+            --dest org.gnome.Shell.Extensions.MacbookLighter \
+            --object-path /org/gnome/Shell/Extensions/MacbookLighter \
+            --method org.gnome.Shell.Extensions.MacbookLighter.SetScreenBrightness \
+            "uint32 $value" 2>/dev/null || true
     else
-        # Keyboard resolution...
-        [ -n "$current_session" ] && busctl call org.freedesktop.login1 \
-            "/org/freedesktop/login1/session/$current_session" \
-            org.freedesktop.login1.Session SetBrightness "ssu" \
-            "leds" "smc::kbd_backlight" "$value" 2>/dev/null || true
-            
-        if [ -n "$current_uid" ]; then
-            local kbd_max percent
-            kbd_max=$(cat $kbd_dir/max_brightness)
-            percent=$(( value * 100 / kbd_max ))
-            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${current_uid}/bus" \
-            sudo -u "#${current_uid}" /usr/bin/gdbus call --session \
-                --dest org.gnome.Shell.Extensions.MacbookLighter \
-                --object-path /org/gnome/Shell/Extensions/MacbookLighter \
-                --method org.gnome.Shell.Extensions.MacbookLighter.SetKeyboardBrightness \
-                "uint32 $percent" 2>/dev/null || true
-        fi
+        local kbd_max percent
+        kbd_max=$(cat $kbd_dir/max_brightness)
+        percent=$(( value * 100 / kbd_max ))
+        # Inform GNOME Shell (Extension D-Bus)
+        /usr/bin/gdbus call --session \
+            --dest org.gnome.Shell.Extensions.MacbookLighter \
+            --object-path /org/gnome/Shell/Extensions/MacbookLighter \
+            --method org.gnome.Shell.Extensions.MacbookLighter.SetKeyboardBrightness \
+            "uint32 $percent" 2>/dev/null || true
     fi
 }
 
@@ -377,7 +340,7 @@ function update {
 }
 
 function watch {
-    $ML_DEBUG && echo watching light change...
+    $ML_DEBUG && echo "watching light change..."
     while true; do
         update
         sleep $ML_INTERVAL

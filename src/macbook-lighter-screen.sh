@@ -24,42 +24,21 @@ screen_help () {
     echo '  macbook-lighter-screen --max'
 }
 
-get_active_user_info() {
-    local session
-    session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
-    if [ -n "$session" ]; then
-        local uid
-        uid=$(loginctl show-session "$session" -p UID --value 2>/dev/null)
-        if [ -n "$uid" ]; then
-            echo "$uid $session"
-            return 0
-        fi
-    fi
-    return 1
-}
-
 notify_brightness() {
     local value="$1"
-    read -r current_uid current_session <<< "$(get_active_user_info)"
-
-    [ -n "$current_session" ] && busctl call org.freedesktop.login1 \
-        "/org/freedesktop/login1/session/$current_session" \
-        org.freedesktop.login1.Session SetBrightness "ssu" \
-        "backlight" "intel_backlight" "$value" 2>/dev/null || true
-
-    if [ -n "$current_uid" ]; then
-        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${current_uid}/bus" \
-        sudo -u "#${current_uid}" /usr/bin/gdbus call --session \
-            --dest org.gnome.Shell.Extensions.MacbookLighter \
-            --object-path /org/gnome/Shell/Extensions/MacbookLighter \
-            --method org.gnome.Shell.Extensions.MacbookLighter.SetScreenBrightness \
-            "uint32 $value" 2>/dev/null || true
-    fi
+    
+    # Inform GNOME Shell (Extension D-Bus)
+    /usr/bin/gdbus call --session \
+        --dest org.gnome.Shell.Extensions.MacbookLighter \
+        --object-path /org/gnome/Shell/Extensions/MacbookLighter \
+        --method org.gnome.Shell.Extensions.MacbookLighter.SetScreenBrightness \
+        "uint32 $value" 2>/dev/null || true
 }
 
 screen_set() {
+    echo "$1" > "$device"
     notify_brightness "$1"
-    echo set to $1
+    echo "set to $1"
 }
 
 case $1 in
@@ -82,7 +61,7 @@ case $1 in
         exit 0
     ;;
     *)
-        echo invalid options
+        echo "invalid options"
         screen_help
         exit 1
     ;;
