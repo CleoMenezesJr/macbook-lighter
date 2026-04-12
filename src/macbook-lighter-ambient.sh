@@ -337,18 +337,23 @@ function update {
     # Manual adjustment detection runs every poll (before hysteresis gate)
     if $ML_AUTO_SCREEN; then
         local screen_from=$(cat $screen_file)
-        if (( screen_last_set > 0 && screen_from != screen_last_set )); then
-            local bin=$(light_bin $light)
-            local formula
-            formula=$(screen_target $light)
-            formula=$(screen_range $formula)
-            local new_offset=$(( screen_from - formula ))
-            set_bin_offset "$bin" $new_offset
-            screen_last_set=$screen_from
-            $ML_DEBUG && echo "manual adjust detected in bin=$bin, skip this cycle"
-            # Still update keyboard even when screen was manually adjusted
-            $ML_AUTO_KBD && update_kbd $light
-            return
+        if (( screen_last_set > 0 )); then
+            local diff=$(( screen_from - screen_last_set ))
+            (( diff < 0 )) && diff=$(( -diff ))
+            
+            # Allow +/- 30 margin to ignore GNOME slider rounding write-backs
+            if (( diff > 30 )); then
+                local bin=$(light_bin $light)
+                local formula
+                formula=$(screen_target $light)
+                formula=$(screen_range $formula)
+                local new_offset=$(( screen_from - formula ))
+                set_bin_offset "$bin" $new_offset
+                screen_last_set=$screen_from
+                $ML_DEBUG && echo "manual adjust detected in bin=$bin (diff $diff), skip this cycle"
+                $ML_AUTO_KBD && update_kbd $light
+                return
+            fi
         fi
     fi
 
@@ -389,14 +394,18 @@ function init {
     local kbd_from=$(cat $kbd_file)
 
     if $ML_AUTO_SCREEN; then
-        local bin=$(light_bin $light)
         local formula
         formula=$(screen_target $light)
         formula=$(screen_range $formula)
         local init_offset=$(( screen_from - formula ))
-        set_bin_offset "$bin" $init_offset
+        
+        # Initialize ALL bins to the current offset to prevent cliffs on first transitions
+        screen_user_offset_dark=$init_offset
+        screen_user_offset_indoor=$init_offset
+        screen_user_offset_bright=$init_offset
+        
         screen_last_set=$screen_from
-        $ML_DEBUG && echo "init: brightness=$screen_from, base=$formula, offset[$bin]=$init_offset"
+        $ML_DEBUG && echo "init: brightness=$screen_from, base=$formula, universal_offset=$init_offset"
     fi
 
     if $ML_AUTO_KBD; then
