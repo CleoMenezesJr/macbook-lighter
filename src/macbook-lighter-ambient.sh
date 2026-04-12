@@ -284,39 +284,41 @@ function update_screen {
 }
 
 function update_kbd {
-    light=$1
-    kbd_from=$(cat $kbd_file)
-    if (( kbd_from != 0 )); then
-        ML_KBD_BRIGHT=$kbd_from
-    fi
+    local light=$1
+    local kbd_from=$(cat $kbd_file)
 
-    $ML_DEBUG && echo light:$light, kbd_adjusted_at:$kbd_adjusted_at, ML_KBD_BRIGHT: $ML_KBD_BRIGHT
+    $ML_DEBUG && echo "kbd: light=$light, kbd_from=$kbd_from"
 
+    local kbd_to
+
+    # Idle timeout override
     if is_idle_for "$ML_KBD_TIMEOUT"; then
         $ML_DEBUG && echo "idle for ${ML_KBD_TIMEOUT}s, turning off kbd"
         kbd_to=0
         kbd_off_for_idle=true
     elif $kbd_off_for_idle; then
-        # User returned from idle — restore if it's dark enough, otherwise reset flag
+        # User returned from idle — restore proportional value if dark enough
         kbd_off_for_idle=false
         if (( light < ML_BRIGHT_ENOUGH )); then
-            kbd_to=$ML_KBD_BRIGHT
+            kbd_to=$(( ML_KBD_BRIGHT * (ML_BRIGHT_ENOUGH - light) / ML_BRIGHT_ENOUGH ))
         else
-            kbd_to=$kbd_from
+            kbd_to=0
         fi
-    elif (( light >= ML_BRIGHT_ENOUGH && kbd_adjusted_at < ML_BRIGHT_ENOUGH )); then
+    elif (( light >= ML_BRIGHT_ENOUGH )); then
         kbd_to=0
-    elif (( light < ML_BRIGHT_ENOUGH && kbd_adjusted_at >= ML_BRIGHT_ENOUGH )); then
-        kbd_to=$ML_KBD_BRIGHT
     else
-        kbd_to=$kbd_from
+        # Proportional: brighter ambient → dimmer keyboard
+        kbd_to=$(( ML_KBD_BRIGHT * (ML_BRIGHT_ENOUGH - light) / ML_BRIGHT_ENOUGH ))
     fi
 
+    # Clamp
+    (( kbd_to < 0 )) && kbd_to=0
+
     if (( kbd_to == kbd_from )); then
-        $ML_DEBUG && echo "kbd no change($kbd_from->$kbd_to), skip update"
+        $ML_DEBUG && echo "kbd no change ($kbd_from), skip"
         return
     fi
-    kbd_adjusted_at=$light
+
     transition $kbd_from $kbd_to $kbd_file
 }
 
