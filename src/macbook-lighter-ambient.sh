@@ -152,6 +152,37 @@ function should_update_brightness {
     return 0
 }
 
+function light_bin {
+    local light=$1
+    local third=$(( ML_BRIGHT_ENOUGH / 3 ))
+    if (( light <= third )); then
+        echo "dark"
+    elif (( light <= third * 2 )); then
+        echo "indoor"
+    else
+        echo "bright"
+    fi
+}
+
+function get_bin_offset {
+    local bin=$1
+    case $bin in
+        dark)    echo $screen_user_offset_dark ;;
+        indoor)  echo $screen_user_offset_indoor ;;
+        bright)  echo $screen_user_offset_bright ;;
+    esac
+}
+
+function set_bin_offset {
+    local bin=$1 value=$2
+    case $bin in
+        dark)    screen_user_offset_dark=$value ;;
+        indoor)  screen_user_offset_indoor=$value ;;
+        bright)  screen_user_offset_bright=$value ;;
+    esac
+    $ML_DEBUG && echo "offset[$bin] = $value"
+}
+
 function notify_brightness {
     local dev=$1
     local value=$2
