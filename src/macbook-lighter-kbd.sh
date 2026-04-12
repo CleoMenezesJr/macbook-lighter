@@ -24,22 +24,34 @@ kbd_help () {
     echo '  macbook-lighter-kbd --max'
 }
 
-notify_brightness() {
-    local value="$1" session uid percent
-    session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null) || true
-    uid=$(loginctl show-session "$session" -p UID --value 2>/dev/null) || true
-    # Fallback to current user's UID when running interactively
-    [ -z "$uid" ] && uid="$(id -u)"
+get_active_user_info() {
+    local session
+    session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
+    if [ -n "$session" ]; then
+        local uid
+        uid=$(loginctl show-session "$session" -p UID --value 2>/dev/null)
+        if [ -n "$uid" ]; then
+            echo "$uid $session"
+            return 0
+        fi
+    fi
+    return 1
+}
 
-    [ -n "$session" ] && busctl call org.freedesktop.login1 \
-        "/org/freedesktop/login1/session/$session" \
+notify_brightness() {
+    local value="$1"
+    read -r current_uid current_session <<< "$(get_active_user_info)"
+
+    [ -n "$current_session" ] && busctl call org.freedesktop.login1 \
+        "/org/freedesktop/login1/session/$current_session" \
         org.freedesktop.login1.Session SetBrightness "ssu" \
         "leds" "smc::kbd_backlight" "$value" 2>/dev/null || true
 
-    if [ -n "$uid" ]; then
+    if [ -n "$current_uid" ]; then
+        local percent
         percent=$(( value * 100 / max ))
-        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
-            /usr/bin/gdbus call --session \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${current_uid}/bus" \
+        sudo -u "#${current_uid}" /usr/bin/gdbus call --session \
             --dest org.gnome.Shell.Extensions.MacbookLighter \
             --object-path /org/gnome/Shell/Extensions/MacbookLighter \
             --method org.gnome.Shell.Extensions.MacbookLighter.SetKeyboardBrightness \

@@ -183,46 +183,55 @@ function set_bin_offset {
     $ML_DEBUG && echo "offset[$bin] = $value"
 }
 
-function get_active_session {
-    loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null
-}
-
-function get_active_uid {
-    local session=$(get_active_session)
-    local uid=$(loginctl show-session "$session" -p UID --value 2>/dev/null)
-    [ -z "$uid" ] && uid="$(id -u)"
-    echo "$uid"
+function get_active_user_info {
+    local session
+    session=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
+    if [ -n "$session" ]; then
+        local uid
+        uid=$(loginctl show-session "$session" -p UID --value 2>/dev/null)
+        if [ -n "$uid" ]; then
+            echo "$uid $session"
+            return 0
+        fi
+    fi
+    return 1
 }
 
 function notify_brightness {
     local dev=$1
     local value=$2
 
-    local current_session=$(get_active_session)
-    local current_uid=$(get_active_uid)
+    read -r current_uid current_session <<< "$(get_active_user_info)"
 
     if [ "$dev" = "$screen_file" ]; then
+        # Inform logind (system bus)
         [ -n "$current_session" ] && busctl call org.freedesktop.login1 \
             "/org/freedesktop/login1/session/$current_session" \
             org.freedesktop.login1.Session SetBrightness "ssu" \
             "backlight" "intel_backlight" "$value" 2>/dev/null || true
-        [ -n "$current_uid" ] && DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${current_uid}/bus" \
-            /usr/bin/gdbus call --session \
-            --dest org.gnome.Shell.Extensions.MacbookLighter \
-            --object-path /org/gnome/Shell/Extensions/MacbookLighter \
-            --method org.gnome.Shell.Extensions.MacbookLighter.SetScreenBrightness \
-            "uint32 $value" 2>/dev/null || true
+            
+        # Inform GNOME Shell (as the user)
+        if [ -n "$current_uid" ]; then
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${current_uid}/bus" \
+            sudo -u "#${current_uid}" /usr/bin/gdbus call --session \
+                --dest org.gnome.Shell.Extensions.MacbookLighter \
+                --object-path /org/gnome/Shell/Extensions/MacbookLighter \
+                --method org.gnome.Shell.Extensions.MacbookLighter.SetScreenBrightness \
+                "uint32 $value" 2>/dev/null || true
+        fi
     else
+        # Keyboard resolution...
         [ -n "$current_session" ] && busctl call org.freedesktop.login1 \
             "/org/freedesktop/login1/session/$current_session" \
             org.freedesktop.login1.Session SetBrightness "ssu" \
             "leds" "smc::kbd_backlight" "$value" 2>/dev/null || true
+            
         if [ -n "$current_uid" ]; then
             local kbd_max percent
             kbd_max=$(cat $kbd_dir/max_brightness)
             percent=$(( value * 100 / kbd_max ))
             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${current_uid}/bus" \
-                /usr/bin/gdbus call --session \
+            sudo -u "#${current_uid}" /usr/bin/gdbus call --session \
                 --dest org.gnome.Shell.Extensions.MacbookLighter \
                 --object-path /org/gnome/Shell/Extensions/MacbookLighter \
                 --method org.gnome.Shell.Extensions.MacbookLighter.SetKeyboardBrightness \
