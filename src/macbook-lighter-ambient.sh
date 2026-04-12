@@ -257,19 +257,6 @@ function update_screen {
     local light=$1
     local screen_from=$(cat $screen_file)
     local bin=$(light_bin $light)
-
-    # Detect manual brightness adjustment (user moved the slider between our writes)
-    if (( screen_last_set > 0 && screen_from != screen_last_set )); then
-        local formula
-        formula=$(screen_target $light)
-        formula=$(screen_range $formula)
-        local new_offset=$(( screen_from - formula ))
-        set_bin_offset "$bin" $new_offset
-        screen_last_set=$screen_from
-        $ML_DEBUG && echo "manual adjust detected in bin=$bin"
-        return
-    fi
-
     local offset=$(get_bin_offset "$bin")
     local screen_to=$(( $(screen_target $light) + offset ))
     screen_to=$(screen_range $screen_to)
@@ -323,14 +310,40 @@ function update_kbd {
 }
 
 function update {
-    $ML_DEBUG && echo updating
-    lid=$(awk '{print $2}' $lid_file)
+    $ML_DEBUG && echo "--- poll ---"
+    local lid=$(awk '{print $2}' $lid_file)
     if [ "$lid" == "closed" ]; then
-        $ML_DEBUG && echo lid closed, skip update
+        $ML_DEBUG && echo "lid closed, skip"
         return
     fi
 
-    light=$(get_light)
+    local light=$(get_smoothed_light)
+    $ML_DEBUG && echo "smoothed light: $light"
+
+    # Manual adjustment detection runs every poll (before hysteresis gate)
+    if $ML_AUTO_SCREEN; then
+        local screen_from=$(cat $screen_file)
+        if (( screen_last_set > 0 && screen_from != screen_last_set )); then
+            local bin=$(light_bin $light)
+            local formula
+            formula=$(screen_target $light)
+            formula=$(screen_range $formula)
+            local new_offset=$(( screen_from - formula ))
+            set_bin_offset "$bin" $new_offset
+            screen_last_set=$screen_from
+            $ML_DEBUG && echo "manual adjust detected in bin=$bin, skip this cycle"
+            # Still update keyboard even when screen was manually adjusted
+            $ML_AUTO_KBD && update_kbd $light
+            return
+        fi
+    fi
+
+    # Hysteresis + asymmetric timing gate
+    if ! should_update_brightness $light; then
+        return
+    fi
+
+    $ML_DEBUG && echo "brightness update confirmed"
     $ML_AUTO_SCREEN && update_screen $light
     $ML_AUTO_KBD && update_kbd $light
 }
@@ -353,25 +366,34 @@ function power_coef {
 }
 
 function init {
-    $ML_DEBUG && echo initializing backlights...
+    $ML_DEBUG && echo "initializing backlights..."
 
-    light=$(get_light)
-    kbd_adjusted_at=$light
+    local light=$(get_smoothed_light)
+    last_trigger_light=$light
 
-    screen_from=$(cat $screen_file)
-    kbd_from=$(cat $kbd_file)
+    local screen_from=$(cat $screen_file)
+    local kbd_from=$(cat $kbd_file)
 
     if $ML_AUTO_SCREEN; then
+        local bin=$(light_bin $light)
         local formula
         formula=$(screen_target $light)
         formula=$(screen_range $formula)
-        screen_user_offset=$(( screen_from - formula ))
+        local init_offset=$(( screen_from - formula ))
+        set_bin_offset "$bin" $init_offset
         screen_last_set=$screen_from
-        $ML_DEBUG && echo "init: brightness=$screen_from, base=$formula, offset=$screen_user_offset"
+        $ML_DEBUG && echo "init: brightness=$screen_from, base=$formula, offset[$bin]=$init_offset"
     fi
 
-    kbd_to=$(( light >= ML_BRIGHT_ENOUGH ? 0 : ML_KBD_BRIGHT ))
-    $ML_AUTO_KBD && transition $kbd_from $kbd_to $kbd_file
+    if $ML_AUTO_KBD; then
+        local kbd_to
+        if (( light >= ML_BRIGHT_ENOUGH )); then
+            kbd_to=0
+        else
+            kbd_to=$(( ML_KBD_BRIGHT * (ML_BRIGHT_ENOUGH - light) / ML_BRIGHT_ENOUGH ))
+        fi
+        transition $kbd_from $kbd_to $kbd_file
+    fi
 }
 
 init
