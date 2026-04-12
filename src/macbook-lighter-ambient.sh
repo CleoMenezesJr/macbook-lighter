@@ -112,6 +112,46 @@ function get_smoothed_light {
     echo $smoothed
 }
 
+function should_update_brightness {
+    local smoothed=$1
+
+    # Proportional hysteresis dead-band
+    if (( last_trigger_light > 0 )); then
+        local diff=$(( smoothed - last_trigger_light ))
+        (( diff < 0 )) && diff=$(( -diff ))
+        local change_pct=$(( diff * 100 / last_trigger_light ))
+        if (( change_pct < ML_HYSTERESIS_PCT )); then
+            brighten_count=0
+            dim_count=0
+            $ML_DEBUG && echo "hysteresis: change ${change_pct}% < ${ML_HYSTERESIS_PCT}%, skip"
+            return 1
+        fi
+    fi
+
+    # Asymmetric confirmation
+    if (( smoothed > last_trigger_light )); then
+        dim_count=0
+        (( brighten_count++ ))
+        if (( brighten_count < ML_BRIGHTEN_CONFIRMS )); then
+            $ML_DEBUG && echo "brighten: confirming ($brighten_count/$ML_BRIGHTEN_CONFIRMS)"
+            return 1
+        fi
+    else
+        brighten_count=0
+        (( dim_count++ ))
+        if (( dim_count < ML_DIM_CONFIRMS )); then
+            $ML_DEBUG && echo "dim: confirming ($dim_count/$ML_DIM_CONFIRMS)"
+            return 1
+        fi
+    fi
+
+    # Confirmed — reset counters and update trigger
+    last_trigger_light=$smoothed
+    brighten_count=0
+    dim_count=0
+    return 0
+}
+
 function notify_brightness {
     local dev=$1
     local value=$2
