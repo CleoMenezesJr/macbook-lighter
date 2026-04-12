@@ -254,25 +254,28 @@ function screen_target {
 }
 
 function update_screen {
-    light=$1
-    screen_from=$(cat $screen_file)
+    local light=$1
+    local screen_from=$(cat $screen_file)
+    local bin=$(light_bin $light)
 
     # Detect manual brightness adjustment (user moved the slider between our writes)
     if (( screen_last_set > 0 && screen_from != screen_last_set )); then
         local formula
         formula=$(screen_target $light)
         formula=$(screen_range $formula)
-        screen_user_offset=$(( screen_from - formula ))
-        $ML_DEBUG && echo "manual adjust detected, new offset: $screen_user_offset"
+        local new_offset=$(( screen_from - formula ))
+        set_bin_offset "$bin" $new_offset
         screen_last_set=$screen_from
+        $ML_DEBUG && echo "manual adjust detected in bin=$bin"
         return
     fi
 
-    screen_to=$(( $(screen_target $light) + screen_user_offset ))
+    local offset=$(get_bin_offset "$bin")
+    local screen_to=$(( $(screen_target $light) + offset ))
     screen_to=$(screen_range $screen_to)
 
-    if (( screen_to - screen_from > -ML_SCREEN_THRESHOLD && screen_to - screen_from < ML_SCREEN_THRESHOLD )); then
-        $ML_DEBUG && echo "screen threshold not reached($screen_from->$screen_to), skip update"
+    if (( screen_to == screen_from )); then
+        $ML_DEBUG && echo "screen no change ($screen_from), skip"
         return
     fi
 
