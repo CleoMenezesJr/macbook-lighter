@@ -52,8 +52,14 @@ active_uid=$(loginctl show-session "$active_session" -p UID --value 2>/dev/null)
 
 #####################################################
 # Private States
-screen_user_offset=0  # learned from manual slider adjustments
-screen_last_set=0     # last brightness value written by this script
+prev_smoothed=""              # EWMA state — empty means uninitialized
+screen_user_offset_dark=0     # per-bin user offsets
+screen_user_offset_indoor=0
+screen_user_offset_bright=0
+screen_last_set=0             # last brightness value written by this script
+last_trigger_light=0          # smoothed light that last triggered a change
+brighten_count=0              # asymmetric confirmation counters
+dim_count=0
 kbd_adjusted_at=0
 kbd_off_for_idle=false
 
@@ -72,12 +78,38 @@ function is_idle_for {
     (( idle_sec >= timeout_sec ))
 }
 
-function get_light {
-    val=$(cat $light_file)   # eg. (41,0)
-    val=${val:1:-3}    # eg. 41
-    val=$(($val > $ML_BRIGHT_ENOUGH ? $ML_BRIGHT_ENOUGH : $val))
-    val=$(($val == 0 ? 1 : $val))
+function read_sensor_raw {
+    local val
+    val=$(cat $light_file)    # eg. (41,0)
+    val=${val:1:-3}           # eg. 41
     echo $val
+}
+
+function get_smoothed_light {
+    # Stage 1: Median filter — take ML_SENSOR_SAMPLES readings, pick the middle
+    local samples=() i raw
+    for (( i=0; i<ML_SENSOR_SAMPLES; i++ )); do
+        raw=$(read_sensor_raw)
+        samples+=($raw)
+        (( i < ML_SENSOR_SAMPLES - 1 )) && sleep $ML_SENSOR_SAMPLE_DELAY
+    done
+    IFS=$'\n' sorted=($(printf '%s\n' "${samples[@]}" | sort -n)); unset IFS
+    local median=${sorted[$(( ML_SENSOR_SAMPLES / 2 ))]}
+
+    # Stage 2: EWMA smoothing
+    local smoothed
+    if [ -z "$prev_smoothed" ]; then
+        smoothed=$median
+    else
+        smoothed=$(echo "scale=0; $ML_EWMA_ALPHA * $median + (1 - $ML_EWMA_ALPHA) * $prev_smoothed" | bc -l)
+    fi
+
+    # Stage 3: Clamp to [1, ML_BRIGHT_ENOUGH]
+    (( smoothed > ML_BRIGHT_ENOUGH )) && smoothed=$ML_BRIGHT_ENOUGH
+    (( smoothed < 1 )) && smoothed=1
+    prev_smoothed=$smoothed
+
+    echo $smoothed
 }
 
 function notify_brightness {
