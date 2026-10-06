@@ -11,15 +11,27 @@ Tested on:
 ## How it works
 
 `macbook-lighter-ambient` runs as a systemd **user daemon** and reads the ambient light sensor to
-adjust screen and keyboard brightness automatically. 
+adjust screen and keyboard brightness automatically.
 
-By running as a user service, the daemon has native access to the desktop's D-Bus bus, allowing for 
-silent synchronization with the GNOME Quick Settings slider without requiring root privileges or complex session discovery.
+Everything works on absolute percentages. The sensor reading is normalized between fixed endpoints
+(darkness = 0 %, `ML_BRIGHT_ENOUGH` = 100 %) and the screen and keyboard follow it between their
+configured limits, so brightness never goes past 0 % or 100 % and nothing is written when a
+backlight is already where it should be.
+
+On GNOME the screen level goes to the bundled [extension](gnome-extension/), which moves GNOME's own
+brightness slider (and the backlight with it) in real time. Its icon becomes a toggle between manual
+and automatic brightness, like the volume mute button. Moving the slider while automatic is on sets
+an offset on top of the ambient level. Without GNOME Shell the daemon writes sysfs directly.
+
+The keyboard backlight is set through UPower, falling back to sysfs, and turns off after
+`ML_KBD_TIMEOUT` seconds of inactivity.
 
 ## Dependencies
 
-- `bc` — arithmetic in brightness transitions
-- `systemd` — user service management and `gdbus` for desktop session sync
+- `systemd` — user service management
+- `gdbus` (glib2) — talks to the GNOME extension, Mutter's idle monitor and UPower
+- `awk` — floating point math for the sensor smoothing
+- GNOME Shell 50+ for the Quick Settings integration (optional)
 
 ## Installation
 
@@ -81,33 +93,34 @@ sudo usermod -aG video $USER
 
 ## Configuration
 
-The daemon reads `/etc/macbook-lighter.conf` on startup. Edit it to tune behavior:
+The daemon reads `/etc/macbook-lighter.conf` on startup. Edit it to tune behavior (all levels are percentages):
 
 ```bash
-# Duration of each brightness transition (seconds)
-ML_DURATION=1.5
+# Raw sensor reading considered full daylight (ambient 100 %)
+ML_BRIGHT_ENOUGH=8
 
-# Polling interval (seconds)
-ML_INTERVAL=5
+# Screen brightness in complete darkness / in full light
+ML_SCREEN_MIN=2
+ML_SCREEN_MAX=100
 
-# Proportional dead-band percentage to prevent oscillation
-ML_HYSTERESIS_PCT=15
+# Ambient change (percentage points) needed before the screen follows
+ML_HYSTERESIS=5
 
-# Polls to confirm before dimming (slow response)
-ML_DIM_CONFIRMS=3
-
-# Enable automatic keyboard adjustment
-ML_AUTO_KBD=true
+# Keyboard brightness in complete darkness; it fades to 0 in full light
+ML_KBD_BRIGHT=50
 ```
+
+On GNOME, automatic screen brightness is toggled from Quick Settings; the state is also available as
+`gsettings set org.gnome.shell.extensions.macbook-lighter auto-brightness false`.
 
 ## Usage
 
 ```bash
-# Increase keyboard backlight by 50
-macbook-lighter-kbd --inc 50
+# Increase keyboard backlight by 20 %
+macbook-lighter-kbd --inc 20
 
-# Increase screen backlight by 50
-macbook-lighter-screen --inc 50
+# Set screen backlight to 40 %
+macbook-lighter-screen --set 40
 
 # Check daemon logs
 journalctl --user -u macbook-lighter -f
