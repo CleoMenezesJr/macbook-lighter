@@ -1,6 +1,8 @@
 [Unit]
-Description=Macbook screen backlight on the ambient light (User Service)
+Description=Macbook screen and keyboard backlight on the ambient light (User Service)
 Documentation=https://github.com/cleomenezesjr/macbook-lighter
+# Only MacBooks expose the applesmc ambient light sensor
+ConditionPathExists=/sys/devices/platform/applesmc.768
 
 [Service]
 Type=simple
