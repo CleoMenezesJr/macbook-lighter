@@ -26,3 +26,4 @@ install-config:
 install-extension:
 	mkdir -p $(EXTENSIONDIR)
 	cp -r gnome-extension/macbook-lighter@cleomenezesjr.github.io/. $(EXTENSIONDIR)/
+	glib-compile-schemas $(EXTENSIONDIR)/schemas

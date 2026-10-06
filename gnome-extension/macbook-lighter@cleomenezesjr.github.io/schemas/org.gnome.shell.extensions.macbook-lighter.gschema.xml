@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.macbook-lighter"
+          path="/org/gnome/shell/extensions/macbook-lighter/">
+    <key name="auto-brightness" type="b">
+      <default>true</default>
+      <summary>Automatic screen brightness</summary>
+      <description>Follow the ambient light level sent by the macbook-lighter daemon.</description>
+    </key>
+    <key name="brightness-bias" type="d">
+      <range min="-1.0" max="1.0"/>
+      <default>0.0</default>
+      <summary>Automatic brightness bias</summary>
+      <description>Offset added to the ambient level, set by moving the slider while automatic brightness is on.</description>
+    </key>
+  </schema>
+</schemalist>

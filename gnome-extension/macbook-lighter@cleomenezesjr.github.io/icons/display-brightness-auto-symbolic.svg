@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <g fill="#2e3436">
+    <g id="rays">
+      <rect x="7.25" y="0" width="1.5" height="2.5" rx="0.75"/>
+      <rect x="7.25" y="13.5" width="1.5" height="2.5" rx="0.75"/>
+      <rect x="0" y="7.25" width="2.5" height="1.5" rx="0.75"/>
+      <rect x="13.5" y="7.25" width="2.5" height="1.5" rx="0.75"/>
+    </g>
+    <use href="#rays" transform="rotate(45 8 8)"/>
+    <!-- sun disc with an "A" cut out -->
+    <path fill-rule="evenodd" d="M8 3.5a4.5 4.5 0 1 0 0 9a4.5 4.5 0 0 0 0-9z M8 5 L10.5 11 H9.2 L8.75 9.8 H7.25 L6.8 11 H5.5 z M8 6.9 L8.4 8.7 H7.6 z"/>
+  </g>
+</svg>

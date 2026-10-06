@@ -1,152 +1,229 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * macbook-lighter GNOME Shell Extension
- * 
- * Provides a D-Bus interface for the macbook-lighter daemon to synchronize
- * hardware backlight levels with the GNOME Shell Quick Settings brightness slider.
- * 
- * Implements a "Silent Sync" mechanism that updates the UI visuals without
- * triggering the system On-Screen Display (OSD), ensuring background adjustments
- * are non-intrusive for the user.
+ *
+ * Turns the icon of the Quick Settings brightness slider into a flat toggle
+ * (like the volume mute button) that switches between manual and automatic
+ * brightness.
+ *
+ * In automatic mode the macbook-lighter daemon sends the ambient brightness
+ * level over D-Bus and the extension moves GNOME's own brightness scale towards
+ * it, so the slider and the backlight travel together in real time. Moving the
+ * slider while automatic is on sets a bias on top of the ambient level instead
+ * of turning automatic off.
  */
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+
+const BUS_NAME = 'org.gnome.Shell.Extensions.MacbookLighter';
+const OBJECT_PATH = '/org/gnome/Shell/Extensions/MacbookLighter';
 
 const IFACE_XML = `
   <node>
     <interface name="org.gnome.Shell.Extensions.MacbookLighter">
-      <method name="SetScreenBrightness">
-        <arg type="u" direction="in" name="raw_value"/>
+      <method name="SetAmbientBrightness">
+        <arg type="d" direction="in" name="level"/>
+        <arg type="u" direction="in" name="duration_ms"/>
       </method>
-      <method name="SetKeyboardBrightness">
-        <arg type="u" direction="in" name="percent"/>
+      <method name="SetBrightness">
+        <arg type="d" direction="in" name="level"/>
       </method>
     </interface>
   </node>`;
 
+const MANUAL_ICON = 'display-brightness-symbolic';
+const AUTO_ICON = 'icons/display-brightness-auto-symbolic.svg';
+
+// Never drive the panel fully dark in automatic mode
+const MIN_LEVEL = 0.01;
+// Levels closer than this are considered equal (the scale is 0.0-1.0)
+const EPSILON = 0.005;
+const FRAME_MS = 16;
+const SAVE_BIAS_DELAY_S = 1;
+
 export default class MacbookLighterExtension extends Extension {
     enable() {
-        try {
-            // Register D-Bus object to listen for brightness change signals from the daemon
-            const ifaceInfo = Gio.DBusNodeInfo.new_for_xml(IFACE_XML).interfaces[0];
-            this._regId = Gio.DBus.session.register_object(
-                '/org/gnome/Shell/Extensions/MacbookLighter',
-                ifaceInfo, this._handleMethodCall.bind(this), null, null
-            );
-            this._ownerId = Gio.DBus.session.own_name(
-                'org.gnome.Shell.Extensions.MacbookLighter',
-                Gio.BusNameOwnerFlags.NONE, null, null
-            );
-        } catch (e) {
-            logError(e, '[macbook-lighter] Registration failed');
+        this._settings = this.getSettings();
+        this._manager = Main.brightnessManager;
+        this._item = Main.panel.statusArea.quickSettings._brightness?.quickSettingsItems[0];
+        this._ambient = null;
+        this._duration = 1500;
+        this._bias = this._settings.get_double('brightness-bias');
+
+        this._dbus = Gio.DBusExportedObject.wrapJSObject(IFACE_XML, {
+            SetAmbientBrightness: (level, durationMs) => this._setAmbient(level, durationMs),
+            SetBrightness: level => this._setBrightness(level),
+        });
+        this._dbus.export(Gio.DBus.session, OBJECT_PATH);
+        this._ownerId = Gio.DBus.session.own_name(BUS_NAME,
+            Gio.BusNameOwnerFlags.NONE, null, null);
+
+        this._manager.connectObject('changed', () => this._watchScale(), this);
+        this._watchScale();
+
+        if (!this._item) {
+            console.warn('[macbook-lighter] Quick Settings brightness slider not found');
+            this._auto = this._settings.get_boolean('auto-brightness');
+            return;
         }
+
+        this._autoIcon = Gio.FileIcon.new(this.dir.resolve_relative_path(AUTO_ICON));
+        this._manualIcon = Gio.ThemedIcon.new(MANUAL_ICON);
+
+        this._item.set({iconReactive: true, iconLabel: 'Automatic Brightness'});
+        this._item.connectObject('icon-clicked', () => {
+            this._settings.set_boolean('auto-brightness', !this._auto);
+        }, this);
+        this._settings.connectObject('changed::auto-brightness',
+            () => this._syncAuto(true), this);
+
+        this._syncAuto(false);
     }
 
     disable() {
-        if (this._ownerId) Gio.DBus.session.unown_name(this._ownerId);
-        if (this._regId) Gio.DBus.session.unregister_object(this._regId);
+        this._stopAnimation();
+        this._saveBias();
+
+        this._dbus.unexport();
+        Gio.DBus.session.unown_name(this._ownerId);
+
+        if (this._item) {
+            this._item.disconnectObject(this);
+            this._item.set({iconReactive: false, iconLabel: '', gicon: this._manualIcon});
+        }
+        this._settings.disconnectObject(this);
+        this._manager.disconnectObject(this);
+        this._scale?.disconnectObject(this);
+
+        this._dbus = null;
+        this._item = null;
+        this._scale = null;
+        this._manager = null;
+        this._settings = null;
     }
 
-    _handleMethodCall(_conn, _sender, _path, _iface, method, params, invocation) {
-        const [value] = params.deepUnpack();
-        if (method === 'SetScreenBrightness') this._syncScreenSlider(value);
-        else if (method === 'SetKeyboardBrightness') this._setKeyboardBrightness(value);
-        invocation.return_value(null);
+    _syncAuto(toggled) {
+        this._auto = this._settings.get_boolean('auto-brightness');
+        this._item.gicon = this._auto ? this._autoIcon : this._manualIcon;
+
+        if (!this._auto) {
+            this._stopAnimation();
+            return;
+        }
+
+        // Switching automatic on starts from the plain ambient level
+        if (toggled) {
+            this._bias = 0;
+            this._saveBias();
+        }
+        this._followAmbient();
     }
 
-    /**
-     * Helper to read hardware state from sysfs
-     */
-    _readSysfs(path) {
-        try {
-            const file = Gio.File.new_for_path(path);
-            const [success, contents] = file.load_contents(null);
-            if (success) return parseInt(new TextDecoder().decode(contents).trim());
-        } catch (e) {}
-        return null;
+    // The global scale is recreated when all backlit monitors go away and back
+    _watchScale() {
+        const scale = this._manager.globalScale;
+        if (scale === this._scale)
+            return;
+
+        this._stopAnimation();
+        this._scale?.disconnectObject(this);
+        this._scale = scale;
+        this._scale?.connectObject('notify::value', () => this._onScaleChanged(), this);
     }
 
-    /**
-     * Orchestrates the synchronization of the screen brightness slider
-     */
-    _syncScreenSlider(passedValue) {
-        // Prefer direct sysfs read for maximum accuracy during hardware-triggered sync
-        const brightness = this._readSysfs('/sys/class/backlight/intel_backlight/brightness') ?? passedValue;
-        const max = this._readSysfs('/sys/class/backlight/intel_backlight/max_brightness') ?? 100;
-        const percent = brightness / max;
+    _onScaleChanged() {
+        if (this._updatingScale || !this._auto || this._ambient === null)
+            return;
 
-        // Brief delay to allow hardware stabilization before UI update
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-             this._applySilentSync(percent);
-             return GLib.SOURCE_REMOVE;
+        // The user moved the slider (or pressed a brightness key): keep the
+        // offset from the ambient level. It is absolute and bounded, so
+        // repeated adjustments never pile up.
+        this._stopAnimation();
+        this._bias = Math.clamp(this._scale.value - this._ambient, -1.0, 1.0);
+        this._queueSaveBias();
+    }
+
+    _setAmbient(level, durationMs) {
+        this._ambient = Math.clamp(level, 0.0, 1.0);
+        this._duration = durationMs;
+        if (this._auto)
+            this._followAmbient();
+    }
+
+    _setBrightness(level) {
+        // Same path as dragging the slider, so automatic mode learns the bias
+        if (this._scale)
+            this._scale.value = Math.clamp(level, 0.0, 1.0);
+    }
+
+    _followAmbient() {
+        if (this._ambient === null || !this._scale)
+            return;
+
+        const target = Math.clamp(this._ambient + this._bias, MIN_LEVEL, 1.0);
+        const from = this._scale.value;
+
+        if (this._animation && Math.abs(this._animation.target - target) < EPSILON)
+            return;
+        this._stopAnimation();
+
+        // Already there, e.g. asked to go darker while at the minimum
+        if (Math.abs(target - from) < EPSILON)
+            return;
+
+        const start = GLib.get_monotonic_time();
+        const duration = Math.max(this._duration, 1) * 1000;
+
+        this._animation = {target};
+        this._animation.id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, FRAME_MS, () => {
+            const t = Math.min((GLib.get_monotonic_time() - start) / duration, 1.0);
+            const eased = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;
+            this._setScaleSilently(from + (target - from) * eased);
+
+            if (t < 1.0)
+                return GLib.SOURCE_CONTINUE;
+            this._animation = null;
+            return GLib.SOURCE_REMOVE;
         });
     }
 
-    /**
-     * Multi-layered "Silent Sync" implementation.
-     * 1. Temporarily hijacks the OSD window manager to suppress pop-ups.
-     * 2. Updates the slider's Adjustment object to ensure visual movement.
-     * 3. Disconnects OSD suppression after a small safety margin.
-     */
-    _applySilentSync(percent) {
+    _stopAnimation() {
+        if (this._animation)
+            GLib.source_remove(this._animation.id);
+        this._animation = null;
+    }
+
+    // Moves GNOME's brightness scale (slider and backlight together) without
+    // popping up the brightness OSD on every animation frame.
+    _setScaleSilently(value) {
+        this._updatingScale = true;
+        this._manager._showOSD = () => {};
         try {
-            const osd = Main.osdWindowManager;
-            let originalShow = null;
-            
-            // Suppress OSD by temporarily overriding the show method
-            if (osd) {
-                const methods = ['show', '_show', 'showNow'];
-                for (let m of methods) {
-                    if (typeof osd[m] === 'function') {
-                        originalShow = { name: m, func: osd[m] };
-                        osd[m] = () => {}; // Mute
-                        break;
-                    }
-                }
-            }
-
-            // Target the Quick Settings brightness slider
-            const qs = Main.panel.statusArea.quickSettings;
-            if (qs && qs.menu?._grid) {
-                qs.menu._grid.get_children().forEach(child => {
-                    const name = child.constructor.name;
-                    if (name === 'BrightnessItem') {
-                        const slider = child.slider || child._slider;
-                        if (slider) {
-                            // Update adjustment directly to force visual synchronization
-                            const adj = slider.adjustment || slider._adjustment;
-                            if (adj) adj.value = percent;
-                            else slider.value = percent;
-                        }
-                    }
-                });
-            }
-
-            // Restore OSD functionality
-            if (originalShow) {
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-                    osd[originalShow.name] = originalShow.func;
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
-
-        } catch (e) {
-             console.error(`[macbook-lighter] Sync Error: ${e.message}`);
+            this._scale.value = value;
+        } finally {
+            delete this._manager._showOSD;
+            this._updatingScale = false;
         }
     }
 
-    /**
-     * Forwards keyboard brightness updates to GNOME Settings Daemon
-     */
-    _setKeyboardBrightness(percent) {
-        Gio.DBus.session.call(
-            'org.gnome.SettingsDaemon.Power', '/org/gnome/SettingsDaemon/Power',
-            'org.freedesktop.DBus.Properties', 'Set',
-            new GLib.Variant('(ssv)', ['org.gnome.SettingsDaemon.Power.Keyboard', 'Brightness', new GLib.Variant('i', percent)]),
-            null, Gio.DBusCallFlags.NONE, -1, null, () => {}
-        );
+    _queueSaveBias() {
+        if (this._saveBiasId)
+            return;
+        this._saveBiasId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, SAVE_BIAS_DELAY_S, () => {
+            this._saveBiasId = 0;
+            this._saveBias();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _saveBias() {
+        if (this._saveBiasId) {
+            GLib.source_remove(this._saveBiasId);
+            this._saveBiasId = 0;
+        }
+        this._settings.set_double('brightness-bias', this._bias);
     }
 }

@@ -1,8 +1,9 @@
 {
   "uuid": "macbook-lighter@cleomenezesjr.github.io",
-  "name": "Macbook Lighter Sync",
-  "description": "Syncs the GNOME brightness slider when macbook-lighter scripts change brightness.",
-  "shell-version": ["47", "48", "49", "50"],
-  "version": 2,
+  "name": "Macbook Lighter",
+  "description": "Automatic screen brightness toggle in Quick Settings, driven by the macbook-lighter ambient light daemon.",
+  "shell-version": ["50", "51"],
+  "settings-schema": "org.gnome.shell.extensions.macbook-lighter",
+  "version": 3,
   "url": "https://github.com/cleomenezesjr/macbook-lighter"
 }
